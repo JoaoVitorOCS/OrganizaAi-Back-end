@@ -36,12 +36,12 @@ class JWTHandler:
         }
         
         access_token = create_access_token(
-            identity=user_id,
+            identity=str(user_id),
             additional_claims=access_additional_claims
         )
         
         refresh_token = create_refresh_token(
-            identity=user_id,
+            identity=str(user_id),
             additional_claims=refresh_additional_claims
         )
         

@@ -18,7 +18,7 @@ def token_required(fn):
     def wrapper(*args, **kwargs):
         try:
             verify_jwt_in_request()
-            
+
             return fn(*args, **kwargs)
             
         except Exception as e:
@@ -43,6 +43,8 @@ def get_current_user():
         
         jwt_data = get_jwt()
         user_id = jwt_data.get('sub')
+        
+        user_id = int(user_id)
         
         user = User.find_by_id(user_id)
         return user
