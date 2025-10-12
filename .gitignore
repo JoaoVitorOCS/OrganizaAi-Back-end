@@ -30,3 +30,5 @@ Thumbs.db
 # Banco de dados local (se usar SQLite)
 *.db
 *.sqlite
+
+uploads/
