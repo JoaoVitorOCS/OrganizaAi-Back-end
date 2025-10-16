@@ -1,43 +1,166 @@
 import requests
 import os
+from typing import Optional
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL_NAME = "meta-llama/llama-4-scout-17b-16e-instruct"
+class GroqClient:
+    """Cliente para integração com Groq API (Llama)"""
+    
+    API_KEY = os.getenv("GROQ_API_KEY")
+    API_URL = "https://api.groq.com/openai/v1/chat/completions"
+    MODEL_NAME = "llama-3.3-70b-versatile"  # Modelo do documento
+    
+    @staticmethod
+    def analyze_receipt_image(image_path: str) -> dict:
+        """
+        Analisa imagem de cupom fiscal usando IA
+        
+        Args:
+            image_path: Caminho para a imagem do cupom
+            
+        Returns:
+            dict: Resposta da API Groq
+            
+        Raises:
+            ValueError: Se API key não estiver configurada
+            requests.exceptions.HTTPError: Se a requisição falhar
+        """
+        
+        if not GroqClient.API_KEY:
+            raise ValueError("GROQ_API_KEY não configurada no .env")
+        
+        # Ler imagem
+        with open(image_path, "rb") as f:
+            image_bytes = f.read()
+        
+        # Headers
+        headers = {
+            "Authorization": f"Bearer {GroqClient.API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        # Prompt estruturado
+        prompt = """
+Analise o cupom fiscal da imagem e retorne APENAS um JSON válido no seguinte formato:
 
-def analyze_receipt_image(image_path: str) -> dict:
-
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
-
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+{
+  "loja": "Nome do estabelecimento",
+  "data_compra": "DD/MM/YYYY",
+  "itens": [
+    {
+      "nome": "Nome do produto",
+      "quantidade": 1,
+      "valor_unitario": 0.00,
+      "valor_total": 0.00
     }
+  ],
+  "valor_total": 0.00,
+  "forma_pagamento": "Débito/Crédito/Dinheiro/PIX",
+  "categoria": null,
+  "texto_bruto": "Texto completo extraído do cupom"
+}
 
-    files = {
-        "file": ("receipt.jpg", image_bytes, "image/jpeg")
-    }
+IMPORTANTE:
+- Retorne APENAS o JSON, sem texto adicional
+- Valores devem ser números (float)
+- Data no formato DD/MM/YYYY
+- Se não conseguir identificar algum campo, use null
+"""
+        
+        # Payload
+        payload = {
+            "model": GroqClient.MODEL_NAME,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Você é um assistente especializado em interpretar cupons fiscais brasileiros com precisão. Retorne sempre JSON válido."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "temperature": 0.1,  # Baixa temperatura para respostas mais determinísticas
+            "max_tokens": 2000
+        }
+        
+        # Fazer requisição
+        try:
+            response = requests.post(
+                GroqClient.API_URL,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            print(f"Erro na requisição para Groq API: {e}")
+            raise
+    
+    @staticmethod
+    def classify_expense_category(items: list[dict]) -> str:
+        """
+        Classifica categoria de gasto baseado nos itens
+        
+        Args:
+            items: Lista de itens da compra
+            
+        Returns:
+            str: Categoria classificada
+        """
+        
+        if not GroqClient.API_KEY:
+            return "Não Classificado"
+        
+        # Criar descrição dos itens
+        items_text = ", ".join([item.get('nome', '') for item in items])
+        
+        headers = {
+            "Authorization": f"Bearer {GroqClient.API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        prompt = f"""
+Classifique a seguinte lista de itens em UMA das categorias abaixo:
 
-    prompt = (
-        "Interprete o cupom fiscal da imagem e me retorne um JSON no seguinte formato:\n"
-        "{\n"
-        "  'loja': string,\n"
-        "  'data_compra': string,\n"
-        "  'itens': [{'nome': string, 'valor': number}],\n"
-        "  'valor_total': number,\n"
-        "  'categoria': null,\n"
-        "  'texto_bruto': string\n"
-        "}"
-    )
+Categorias disponíveis:
+- Alimentação
+- Transporte
+- Saúde
+- Educação
+- Lazer
+- Vestuário
+- Moradia
+- Outros
 
-    data = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": "Você é um assistente que interpreta cupons fiscais com precisão."},
-            {"role": "user", "content": prompt}
-        ],
-    }
+Itens: {items_text}
 
-    response = requests.post(GROQ_API_URL, headers=headers, data={"model": MODEL_NAME}, files=files)
-    response.raise_for_status()
-    return response.json()
+Retorne APENAS o nome da categoria, sem explicações.
+"""
+        
+        payload = {
+            "model": GroqClient.MODEL_NAME,
+            "messages": [
+                {"role": "system", "content": "Você é um classificador de despesas."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 50
+        }
+        
+        try:
+            response = requests.post(
+                GroqClient.API_URL,
+                headers=headers,
+                json=payload,
+                timeout=10
+            )
+            response.raise_for_status()
+            
+            category = response.json()["choices"][0]["message"]["content"].strip()
+            return category
+            
+        except Exception as e:
+            print(f"Erro ao classificar categoria: {e}")
+            return "Não Classificado"

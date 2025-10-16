@@ -1,11 +1,69 @@
-from flask import Blueprint, request, jsonify
+from flask import request
+from flask_restx import Namespace, Resource, fields
+from flask_jwt_extended import jwt_required, get_jwt_identity
 from app.models.user import User
 from app.utils.jwt_handler import JWTHandler
-from app.middleware.auth_middleware import token_required, get_current_user
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.middleware.auth_middleware import get_current_user
 import re
 
-auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
+# Criar namespace para autenticação
+auth_ns = Namespace('auth', description='Operações de autenticação e gerenciamento de usuários')
+
+# ==================== MODELS (SCHEMAS) ====================
+
+# Model para registro de usuário
+register_model = auth_ns.model('Register', {
+    'email': fields.String(required=True, description='Email do usuário', example='usuario@exemplo.com'),
+    'password': fields.String(required=True, description='Senha (mínimo 6 caracteres)', example='senha123'),
+    'name': fields.String(required=True, description='Nome completo', example='João Silva')
+})
+
+# Model para login
+login_model = auth_ns.model('Login', {
+    'email': fields.String(required=True, description='Email do usuário', example='usuario@exemplo.com'),
+    'password': fields.String(required=True, description='Senha', example='senha123')
+})
+
+# Model de resposta de usuário
+user_response_model = auth_ns.model('UserResponse', {
+    'id': fields.Integer(description='ID do usuário'),
+    'email': fields.String(description='Email do usuário'),
+    'name': fields.String(description='Nome do usuário'),
+    'created_at': fields.String(description='Data de criação')
+})
+
+# Model de tokens
+tokens_model = auth_ns.model('Tokens', {
+    'access_token': fields.String(description='Token de acesso JWT'),
+    'refresh_token': fields.String(description='Token de renovação JWT'),
+    'token_type': fields.String(description='Tipo do token', example='Bearer'),
+    'expires_in': fields.Integer(description='Tempo de expiração em segundos', example=3600)
+})
+
+# Model de resposta de autenticação
+auth_response_model = auth_ns.model('AuthResponse', {
+    'success': fields.Boolean(description='Status da operação'),
+    'message': fields.String(description='Mensagem de retorno'),
+    'data': fields.Nested(auth_ns.model('AuthData', {
+        'user': fields.Nested(user_response_model),
+        'tokens': fields.Nested(tokens_model)
+    }))
+})
+
+# Model de resposta de perfil
+profile_response_model = auth_ns.model('ProfileResponse', {
+    'success': fields.Boolean(description='Status da operação'),
+    'data': fields.Nested(user_response_model)
+})
+
+# Model de resposta de erro
+error_model = auth_ns.model('Error', {
+    'success': fields.Boolean(description='Status da operação', example=False),
+    'message': fields.String(description='Mensagem de erro'),
+    'error': fields.String(description='Detalhes do erro')
+})
+
+# ==================== FUNÇÕES AUXILIARES ====================
 
 def validate_email(email: str) -> bool:
     """Valida formato de email"""
@@ -13,316 +71,236 @@ def validate_email(email: str) -> bool:
     return re.match(pattern, email) is not None
 
 def validate_password(password: str) -> tuple[bool, str]:
-    """
-    Valida força da senha
-    
-    Returns:
-        (is_valid, message)
-    """
+    """Valida força da senha"""
     if len(password) < 6:
         return False, "Senha deve ter no mínimo 6 caracteres"
-    
     if len(password) > 100:
         return False, "Senha muito longa (máximo 100 caracteres)"
-    
     return True, "Senha válida"
 
+# ==================== ENDPOINTS ====================
 
-@auth_bp.route('/register', methods=['POST'])
-def register():
-    """
-    Endpoint para registro de novos usuários
-    
-    Body JSON:
-        {
-            "email": "usuario@exemplo.com",
-            "password": "senha123",
-            "name": "João Silva"
-        }
-    
-    Returns:
-        201: Usuário criado com sucesso
-        400: Dados inválidos
-        409: Email já cadastrado
-        500: Erro interno
-    """
-    
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({
-                'success': False,
-                'message': 'Corpo da requisição vazio'
-            }), 400
-        
-        email = data.get('email', '').strip()
-        password = data.get('password', '')
-        name = data.get('name', '').strip()
-        
-        if not email or not password or not name:
-            return jsonify({
-                'success': False,
-                'message': 'Email, senha e nome são obrigatórios'
-            }), 400
-        
-        if not validate_email(email):
-            return jsonify({
-                'success': False,
-                'message': 'Formato de email inválido'
-            }), 400
-        
-        is_valid_password, password_message = validate_password(password)
-        if not is_valid_password:
-            return jsonify({
-                'success': False,
-                'message': password_message
-            }), 400
-        
-        if len(name) < 3:
-            return jsonify({
-                'success': False,
-                'message': 'Nome deve ter no mínimo 3 caracteres'
-            }), 400
-        
-        existing_user = User.find_by_email(email)
-        if existing_user:
-            return jsonify({
-                'success': False,
-                'message': 'Email já cadastrado'
-            }), 409
-        
-        user = User.create_user(
-            email=email,
-            password=password,
-            name=name
-        )
-        
-        if not user:
-            return jsonify({
-                'success': False,
-                'message': 'Erro ao criar usuário'
-            }), 500
-        
-        tokens = JWTHandler.generate_tokens(user['id'], user['email'])
-        
-        return jsonify({
-            'success': True,
-            'message': 'Usuário criado com sucesso',
-            'data': {
-                'user': {
+@auth_ns.route('/register')
+class Register(Resource):
+    @auth_ns.doc('register_user', 
+                 description='Cria uma nova conta de usuário',
+                 responses={
+                     201: ('Usuário criado com sucesso', auth_response_model),
+                     400: ('Dados inválidos', error_model),
+                     409: ('Email já cadastrado', error_model),
+                     500: ('Erro interno do servidor', error_model)
+                 })
+    @auth_ns.expect(register_model, validate=True)
+    @auth_ns.marshal_with(auth_response_model, code=201)
+    def post(self):
+        """Registrar novo usuário"""
+        try:
+            data = request.get_json()
+            
+            if not data:
+                auth_ns.abort(400, 'Corpo da requisição vazio')
+            
+            email = data.get('email', '').strip()
+            password = data.get('password', '')
+            name = data.get('name', '').strip()
+            
+            if not email or not password or not name:
+                auth_ns.abort(400, 'Email, senha e nome são obrigatórios')
+            
+            if not validate_email(email):
+                auth_ns.abort(400, 'Formato de email inválido')
+            
+            is_valid_password, password_message = validate_password(password)
+            if not is_valid_password:
+                auth_ns.abort(400, password_message)
+            
+            if len(name) < 3:
+                auth_ns.abort(400, 'Nome deve ter no mínimo 3 caracteres')
+            
+            existing_user = User.find_by_email(email)
+            if existing_user:
+                auth_ns.abort(409, 'Email já cadastrado')
+            
+            user = User.create_user(email=email, password=password, name=name)
+            
+            if not user:
+                auth_ns.abort(500, 'Erro ao criar usuário')
+            
+            tokens = JWTHandler.generate_tokens(user['id'], user['email'])
+            
+            return {
+                'success': True,
+                'message': 'Usuário criado com sucesso',
+                'data': {
+                    'user': {
+                        'id': user['id'],
+                        'email': user['email'],
+                        'name': user['name'],
+                        'created_at': user['created_at'].isoformat() if user.get('created_at') else None
+                    },
+                    'tokens': tokens
+                }
+            }, 201
+            
+        except Exception as e:
+            auth_ns.abort(500, f'Erro interno: {str(e)}')
+
+
+@auth_ns.route('/login')
+class Login(Resource):
+    @auth_ns.doc('login_user',
+                 description='Autenticar usuário e obter tokens JWT',
+                 responses={
+                     200: ('Login realizado com sucesso', auth_response_model),
+                     400: ('Dados inválidos', error_model),
+                     401: ('Credenciais inválidas', error_model),
+                     500: ('Erro interno do servidor', error_model)
+                 })
+    @auth_ns.expect(login_model, validate=True)
+    @auth_ns.marshal_with(auth_response_model, code=200)
+    def post(self):
+        """Fazer login"""
+        try:
+            data = request.get_json()
+            
+            if not data:
+                auth_ns.abort(400, 'Corpo da requisição vazio')
+            
+            email = data.get('email', '').strip()
+            password = data.get('password', '')
+            
+            if not email or not password:
+                auth_ns.abort(400, 'Email e senha são obrigatórios')
+            
+            user = User.find_by_email(email)
+            
+            if not user:
+                auth_ns.abort(401, 'Credenciais inválidas')
+            
+            if not User.verify_password(password, user['password_hash']):
+                auth_ns.abort(401, 'Credenciais inválidas')
+            
+            tokens = JWTHandler.generate_tokens(user['id'], user['email'])
+            
+            return {
+                'success': True,
+                'message': 'Login realizado com sucesso',
+                'data': {
+                    'user': {
+                        'id': user['id'],
+                        'email': user['email'],
+                        'name': user['name']
+                    },
+                    'tokens': tokens
+                }
+            }, 200
+            
+        except Exception as e:
+            auth_ns.abort(500, f'Erro interno: {str(e)}')
+
+
+@auth_ns.route('/me')
+class Profile(Resource):
+    @auth_ns.doc('get_profile',
+                 description='Obter dados do usuário autenticado',
+                 security='Bearer',
+                 responses={
+                     200: ('Perfil do usuário', profile_response_model),
+                     401: ('Token inválido ou não fornecido', error_model),
+                     404: ('Usuário não encontrado', error_model),
+                     500: ('Erro interno do servidor', error_model)
+                 })
+    @auth_ns.marshal_with(profile_response_model, code=200)
+    @jwt_required()
+    def get(self):
+        """Obter perfil do usuário autenticado"""
+        try:
+            user = get_current_user()
+            
+            if not user:
+                auth_ns.abort(404, 'Usuário não encontrado')
+            
+            return {
+                'success': True,
+                'data': {
                     'id': user['id'],
                     'email': user['email'],
                     'name': user['name'],
-                    'created_at': user['created_at'].isoformat() if user.get('created_at') else None
-                },
-                'tokens': tokens
-            }
-        }), 201
-        
-    except Exception as e:
-        print(f"Erro no registro: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Erro interno do servidor',
-            'error': str(e)
-        }), 500
+                    'created_at': user['created_at'].isoformat() if user.get('created_at') else None,
+                    'updated_at': user['updated_at'].isoformat() if user.get('updated_at') else None
+                }
+            }, 200
+            
+        except Exception as e:
+            auth_ns.abort(500, f'Erro ao buscar perfil: {str(e)}')
 
 
-@auth_bp.route('/login', methods=['POST'])
-def login():
-    """
-    Endpoint para login de usuários
-    
-    Body JSON:
-        {
-            "email": "usuario@exemplo.com",
-            "password": "senha123"
-        }
-    
-    Returns:
-        200: Login bem-sucedido
-        400: Dados inválidos
-        401: Credenciais incorretas
-        500: Erro interno
-    """
-    
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({
-                'success': False,
-                'message': 'Corpo da requisição vazio'
-            }), 400
-        
-        email = data.get('email', '').strip()
-        password = data.get('password', '')
-        
-        if not email or not password:
-            return jsonify({
-                'success': False,
-                'message': 'Email e senha são obrigatórios'
-            }), 400
-        
-        user = User.find_by_email(email)
-        
-        if not user:
-            return jsonify({
-                'success': False,
-                'message': 'Credenciais inválidas'
-            }), 401
-        
-        if not User.verify_password(password, user['password_hash']):
-            return jsonify({
-                'success': False,
-                'message': 'Credenciais inválidas'
-            }), 401
-        
-        tokens = JWTHandler.generate_tokens(user['id'], user['email'])
-        
-        return jsonify({
-            'success': True,
-            'message': 'Login realizado com sucesso',
-            'data': {
-                'user': {
-                    'id': user['id'],
-                    'email': user['email'],
-                    'name': user['name']
-                },
-                'tokens': tokens
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Erro no login: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Erro interno do servidor',
-            'error': str(e)
-        }), 500
+@auth_ns.route('/refresh')
+class Refresh(Resource):
+    @auth_ns.doc('refresh_token',
+                 description='Renovar access token usando refresh token',
+                 security='Bearer',
+                 responses={
+                     200: ('Token renovado com sucesso', auth_ns.model('RefreshResponse', {
+                         'success': fields.Boolean(),
+                         'message': fields.String(),
+                         'data': fields.Nested(auth_ns.model('RefreshData', {
+                             'tokens': fields.Nested(tokens_model)
+                         }))
+                     })),
+                     401: ('Refresh token inválido', error_model),
+                     404: ('Usuário não encontrado', error_model),
+                     500: ('Erro interno do servidor', error_model)
+                 })
+    @jwt_required(refresh=True)
+    def post(self):
+        """Renovar token de acesso"""
+        try:
+            current_user_id = get_jwt_identity()
+            user = User.find_by_id(int(current_user_id))
+            
+            if not user:
+                auth_ns.abort(404, 'Usuário não encontrado')
+            
+            tokens = JWTHandler.generate_tokens(user['id'], user['email'])
+            
+            return {
+                'success': True,
+                'message': 'Token renovado com sucesso',
+                'data': {
+                    'tokens': tokens
+                }
+            }, 200
+            
+        except Exception as e:
+            auth_ns.abort(500, f'Erro ao renovar token: {str(e)}')
 
 
-@auth_bp.route('/me', methods=['GET'])
-@token_required
-def get_user_profile():
-    """
-    Endpoint protegido - retorna dados do usuário autenticado
-    
-    Headers:
-        Authorization: Bearer <access_token>
-    
-    Returns:
-        200: Dados do usuário
-        401: Token inválido
-        404: Usuário não encontrado
-        500: Erro interno
-    """
-    
-    try:
-        user = get_current_user()
-        
-        if not user:
-            return jsonify({
-                'success': False,
-                'message': 'Usuário não encontrado'
-            }), 404
-        
-        return jsonify({
-            'success': True,
-            'data': {
-                'id': user['id'],
-                'email': user['email'],
-                'name': user['name'],
-                'created_at': user['created_at'].isoformat() if user.get('created_at') else None,
-                'updated_at': user['updated_at'].isoformat() if user.get('updated_at') else None
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Erro ao buscar perfil: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Erro ao buscar perfil',
-            'error': str(e)
-        }), 500
-
-
-@auth_bp.route('/refresh', methods=['POST'])
-@jwt_required(refresh=True)
-def refresh():
-    """
-    Endpoint para renovar access token usando refresh token
-    
-    Headers:
-        Authorization: Bearer <refresh_token>
-    
-    Returns:
-        200: Novo access token gerado
-        401: Refresh token inválido
-        404: Usuário não encontrado
-        500: Erro interno
-    """
-    
-    try:
-        current_user_id = get_jwt_identity()
-        user = User.find_by_id(current_user_id)
-        
-        if not user:
-            return jsonify({
-                'success': False,
-                'message': 'Usuário não encontrado'
-            }), 404
-        
-        tokens = JWTHandler.generate_tokens(user['id'], user['email'])
-        
-        return jsonify({
-            'success': True,
-            'message': 'Token renovado com sucesso',
-            'data': {
-                'tokens': tokens
-            }
-        }), 200
-        
-    except Exception as e:
-        print(f"Erro ao renovar token: {e}")
-        return jsonify({
-            'success': False,
-            'message': 'Erro ao renovar token',
-            'error': str(e)
-        }), 500
-
-
-@auth_bp.route('/logout', methods=['POST'])
-@token_required
-def logout():
-    """
-    Endpoint para logout (informativo)
-    
-    Nota: JWT é stateless, então o logout real acontece no frontend
-    descartando o token. Este endpoint apenas registra a ação.
-    
-    Headers:
-        Authorization: Bearer <access_token>
-    
-    Returns:
-        200: Logout registrado
-    """
-    
-    try:
-        user = get_current_user()
-        
-        if user:
-            print(f"Logout do usuário: {user['email']}")
-        
-        return jsonify({
-            'success': True,
-            'message': 'Logout realizado com sucesso'
-        }), 200
-        
-    except Exception as e:
-        return jsonify({
-            'success': False,
-            'message': 'Erro ao fazer logout',
-            'error': str(e)
-        }), 500
+@auth_ns.route('/logout')
+class Logout(Resource):
+    @auth_ns.doc('logout_user',
+                 description='Fazer logout (informativo - JWT é stateless)',
+                 security='Bearer',
+                 responses={
+                     200: ('Logout realizado', auth_ns.model('LogoutResponse', {
+                         'success': fields.Boolean(),
+                         'message': fields.String()
+                     })),
+                     401: ('Token inválido', error_model)
+                 })
+    @jwt_required()
+    def post(self):
+        """Fazer logout"""
+        try:
+            user = get_current_user()
+            
+            if user:
+                print(f"ℹ️ Logout do usuário: {user['email']}")
+            
+            return {
+                'success': True,
+                'message': 'Logout realizado com sucesso'
+            }, 200
+            
+        except Exception as e:
+            auth_ns.abort(500, f'Erro ao fazer logout: {str(e)}')
