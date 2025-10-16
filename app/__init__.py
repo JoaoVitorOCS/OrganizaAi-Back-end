@@ -1,5 +1,6 @@
 from flask import Flask
 from flask_jwt_extended import JWTManager
+from flask_cors import CORS
 from app.config import Config
 from app.swagger import configure_swagger
 from app.models.user import User
@@ -10,17 +11,54 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
     
+    # ==================== CONFIGURAR CORS ====================
+    # Otimizado para React + Vercel/Netlify
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": app.config['CORS_ORIGINS'],
+            "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+            "allow_headers": [
+                "Content-Type",
+                "Authorization",
+                "X-Requested-With",
+                "Accept",
+                "Origin",
+                "Cache-Control",
+                "X-File-Name"
+            ],
+            "expose_headers": [
+                "Content-Type",
+                "Authorization",
+                "X-Total-Count",
+                "X-Page-Number"
+            ],
+            "supports_credentials": True,
+            "max_age": 3600
+        },
+        # CORS para documentação Swagger também
+        r"/docs": {
+            "origins": "*",
+            "methods": ["GET"]
+        },
+        r"/swagger.json": {
+            "origins": "*",
+            "methods": ["GET"]
+        }
+    })
+    
     # Inicializar JWT
     jwt = JWTManager(app)
     
     # Configurar Swagger
     api = configure_swagger(app)
     
-    # Importar namespaces (após configurar Swagger)
+    # Importar namespaces
     from app.routes.auth import auth_ns
+    from app.routes.ocr import ocr_ns
     
     # Registrar namespaces no Swagger
     api.add_namespace(auth_ns, path='/auth')
+    api.add_namespace(ocr_ns, path='/ocr')
     
     # Criar tabelas do banco
     with app.app_context():
@@ -72,17 +110,44 @@ def create_app():
             'error': 'token_verification_failed'
         }, 401
     
+    # ==================== HANDLERS DE ERRO HTTP ====================
+    
+    @app.errorhandler(404)
+    def not_found(error):
+        return {
+            'success': False,
+            'message': 'Rota não encontrada',
+            'error': 'not_found'
+        }, 404
+    
+    @app.errorhandler(405)
+    def method_not_allowed(error):
+        return {
+            'success': False,
+            'message': 'Método não permitido para esta rota',
+            'error': 'method_not_allowed'
+        }, 405
+    
+    @app.errorhandler(500)
+    def internal_server_error(error):
+        return {
+            'success': False,
+            'message': 'Erro interno do servidor',
+            'error': 'internal_server_error'
+        }, 500
+    
     # ==================== ROTA DE HEALTH CHECK ====================
     
     @app.route('/')
     def home():
-        """Rota raiz - redireciona para documentação"""
+        """Rota raiz - health check"""
         return {
             'success': True,
             'message': 'API de Gestão de Gastos',
             'version': '1.0.0',
             'docs': '/docs',
-            'swagger_json': '/swagger.json'
+            'swagger_json': '/swagger.json',
+            'cors_enabled': True
         }, 200
     
     @app.route('/health')
