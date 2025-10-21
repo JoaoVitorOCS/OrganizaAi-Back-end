@@ -7,12 +7,12 @@ class GroqClient:
     
     API_KEY = os.getenv("GROQ_API_KEY")
     API_URL = "https://api.groq.com/openai/v1/chat/completions"
-    MODEL_NAME = "llama-3.3-70b-versatile"  # Modelo do documento
+    MODEL_NAME = "llama-3.3-70b-versatile"  # Modelo com visão integrada
     
     @staticmethod
     def analyze_receipt_image(image_path: str) -> dict:
         """
-        Analisa imagem de cupom fiscal usando IA
+        Analisa imagem de cupom fiscal usando IA.
         
         Args:
             image_path: Caminho para a imagem do cupom
@@ -24,15 +24,9 @@ class GroqClient:
             ValueError: Se API key não estiver configurada
             requests.exceptions.HTTPError: Se a requisição falhar
         """
-        
         if not GroqClient.API_KEY:
             raise ValueError("GROQ_API_KEY não configurada no .env")
         
-        # Ler imagem
-        with open(image_path, "rb") as f:
-            image_bytes = f.read()
-        
-        # Headers
         headers = {
             "Authorization": f"Bearer {GroqClient.API_KEY}",
             "Content-Type": "application/json"
@@ -40,7 +34,7 @@ class GroqClient:
         
         # Prompt estruturado
         prompt = """
-Analise o cupom fiscal da imagem e retorne APENAS um JSON válido no seguinte formato:
+Analise o cupom fiscal da imagem fornecida e retorne APENAS um JSON válido no seguinte formato:
 
 {
   "loja": "Nome do estabelecimento",
@@ -66,7 +60,7 @@ IMPORTANTE:
 - Se não conseguir identificar algum campo, use null
 """
         
-        # Payload
+        # Payload com imagem incluída
         payload = {
             "model": GroqClient.MODEL_NAME,
             "messages": [
@@ -76,14 +70,16 @@ IMPORTANTE:
                 },
                 {
                     "role": "user",
-                    "content": prompt
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image", "image_url": f"file://{image_path}"}
+                    ]
                 }
             ],
-            "temperature": 0.1,  # Baixa temperatura para respostas mais determinísticas
+            "temperature": 0.1,
             "max_tokens": 2000
         }
         
-        # Fazer requisição
         try:
             response = requests.post(
                 GroqClient.API_URL,
@@ -93,7 +89,6 @@ IMPORTANTE:
             )
             response.raise_for_status()
             return response.json()
-            
         except requests.exceptions.RequestException as e:
             print(f"Erro na requisição para Groq API: {e}")
             raise
@@ -101,7 +96,7 @@ IMPORTANTE:
     @staticmethod
     def classify_expense_category(items: list[dict]) -> str:
         """
-        Classifica categoria de gasto baseado nos itens
+        Classifica categoria de gasto baseado nos itens.
         
         Args:
             items: Lista de itens da compra
@@ -109,11 +104,9 @@ IMPORTANTE:
         Returns:
             str: Categoria classificada
         """
-        
         if not GroqClient.API_KEY:
             return "Não Classificado"
         
-        # Criar descrição dos itens
         items_text = ", ".join([item.get('nome', '') for item in items])
         
         headers = {
@@ -157,10 +150,8 @@ Retorne APENAS o nome da categoria, sem explicações.
                 timeout=10
             )
             response.raise_for_status()
-            
             category = response.json()["choices"][0]["message"]["content"].strip()
             return category
-            
         except Exception as e:
             print(f"Erro ao classificar categoria: {e}")
             return "Não Classificado"
