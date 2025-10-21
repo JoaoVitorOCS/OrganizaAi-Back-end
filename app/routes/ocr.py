@@ -3,50 +3,192 @@ from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required
 from app.middleware.auth_middleware import get_current_user
 from app.services.file_handler import FileHandler
-from app.services.llm_client import GeminiClient
-from app.services.parser import ResponseParser
 import os
+from datetime import datetime, timedelta
+import random
+import string
 
 # Criar namespace para OCR
 ocr_ns = Namespace('ocr', description='Operações de OCR e análise de cupons fiscais')
 
 # ==================== MODELS ====================
 
-item_model = ocr_ns.model('Item', {
-    'nome': fields.String(description='Nome do produto'),
-    'quantidade': fields.Integer(description='Quantidade'),
-    'valor_unitario': fields.Float(description='Valor unitário'),
-    'valor_total': fields.Float(description='Valor total do item')
-})
+# ... (mantenha os models anteriores)
 
-receipt_data_model = ocr_ns.model('ReceiptData', {
-    'loja': fields.String(description='Nome do estabelecimento'),
-    'data_compra': fields.String(description='Data da compra'),
-    'itens': fields.List(fields.Nested(item_model)),
-    'valor_total': fields.Float(description='Valor total da compra'),
-    'forma_pagamento': fields.String(description='Forma de pagamento'),
-    'categoria': fields.String(description='Categoria do gasto'),
-    'arquivo': fields.String(description='Nome do arquivo')
-})
+# ==================== FUNÇÕES AUXILIARES ====================
 
-upload_response_model = ocr_ns.model('OCRResponse', {
-    'success': fields.Boolean(description='Status da operação'),
-    'message': fields.String(description='Mensagem de retorno'),
-    'data': fields.Nested(receipt_data_model)
-})
+def generate_random_id(length=8):
+    """Gera ID aleatório"""
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-error_model = ocr_ns.model('Error', {
-    'success': fields.Boolean(description='Status da operação'),
-    'message': fields.String(description='Mensagem de erro'),
-    'error': fields.String(description='Detalhes do erro')
-})
+def generate_mock_data():
+    """Gera dados mockados no formato esperado pelo frontend"""
+    
+    # Lojas mockadas
+    lojas = [
+        "Supermercado Central",
+        "Posto Shell",
+        "Drogaria São Paulo",
+        "McDonald's",
+        "Carrefour",
+        "Extra Hipermercado",
+        "Farmácia Pague Menos"
+    ]
+    
+    # Gerar dados para DataTableBackup_DataTableDemo (últimos gastos)
+    gastos_recentes = []
+    for i in range(10):
+        days_ago = random.randint(0, 30)
+        date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+        
+        gastos_recentes.append({
+            "id": generate_random_id(),
+            "gastos": round(random.uniform(15.50, 950.00), 2),
+            "status": random.choice(["success", "processing", "pending"]),
+            "loja": random.choice(lojas),
+            "date": date
+        })
+    
+    # Ordenar por data (mais recente primeiro)
+    gastos_recentes.sort(key=lambda x: x['date'], reverse=True)
+    
+    # Gerar dados para DataTableContainer (resumo)
+    emails = [
+        "user@example.com",
+        "joao@example.com",
+        "maria@example.com",
+        "pedro@example.com"
+    ]
+    
+    resumo_gastos = []
+    for i in range(5):
+        resumo_gastos.append({
+            "id": generate_random_id(),
+            "amount": random.randint(100, 1000),
+            "status": random.choice(["success", "failed", "pending"]),
+            "email": random.choice(emails)
+        })
+    
+    # Gerar dados para ChartBarDefault (gastos mensais por categoria)
+    meses = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    mes_atual = datetime.now().month
+    
+    chart_data = []
+    for i in range(6):  # Últimos 6 meses
+        mes_index = (mes_atual - i - 1) % 12
+        mes = meses[mes_index]
+        
+        food = round(random.uniform(200, 600), 2)
+        transport = round(random.uniform(100, 300), 2)
+        utilities = round(random.uniform(80, 200), 2)
+        entertainment = round(random.uniform(50, 150), 2)
+        
+        chart_data.append({
+            "month": mes,
+            "food": food,
+            "transport": transport,
+            "utilities": utilities,
+            "entertainment": entertainment,
+            "all": round(food + transport + utilities + entertainment, 2)
+        })
+    
+    # Inverter para ordem cronológica
+    chart_data.reverse()
+    
+    # Montar resposta final
+    return {
+        "tables": {
+            "DataTableContainer": {
+                "data": resumo_gastos
+            },
+            "DataTableBackup_DataTableDemo": {
+                "data": gastos_recentes
+            }
+        },
+        "charts": {
+            "ChartBarDefault": {
+                "data": chart_data
+            }
+        }
+    }
 
 # ==================== ENDPOINTS ====================
+
+@ocr_ns.route('/dashboard')
+class Dashboard(Resource):
+    
+    def options(self):
+        """Handle CORS preflight"""
+        response = make_response('', 204)
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response
+    
+    @ocr_ns.doc('get_dashboard',
+                description='Retorna dados mockados para dashboard (tabelas e gráficos)',
+                security='Bearer',
+                responses={
+                    200: 'Dados do dashboard retornados com sucesso',
+                    401: ('Não autenticado', error_model)
+                })
+    @jwt_required()
+    def get(self):
+        """
+        Obter dados do dashboard (MOCKADO)
+        
+        Retorna dados formatados para:
+        - DataTableContainer: Resumo de gastos
+        - DataTableBackup_DataTableDemo: Últimos gastos detalhados
+        - ChartBarDefault: Gráfico de barras mensal por categoria
+        
+        **Formato de resposta:**
+```json
+        {
+          "tables": {
+            "DataTableContainer": {
+              "data": [...]
+            },
+            "DataTableBackup_DataTableDemo": {
+              "data": [...]
+            }
+          },
+          "charts": {
+            "ChartBarDefault": {
+              "data": [...]
+            }
+          }
+        }
+```
+        """
+        try:
+            user = get_current_user()
+            
+            if not user:
+                return {
+                    'success': False,
+                    'message': 'Usuário não autenticado'
+                }, 401
+            
+            # Gerar dados mockados
+            dashboard_data = generate_mock_data()
+            
+            print(f"📊 Dashboard mockado gerado para: {user['email']}")
+            print(f"📋 Gastos recentes: {len(dashboard_data['tables']['DataTableBackup_DataTableDemo']['data'])}")
+            print(f"📈 Meses no gráfico: {len(dashboard_data['charts']['ChartBarDefault']['data'])}")
+            
+            return dashboard_data, 200
+            
+        except Exception as e:
+            print(f"❌ Erro ao gerar dashboard: {e}")
+            return {
+                'success': False,
+                'message': f'Erro ao gerar dashboard: {str(e)}'
+            }, 500
+
 
 @ocr_ns.route('/analyze')
 class AnalyzeCoupon(Resource):
     
-    # OPTIONS para preflight CORS
     def options(self):
         """Handle CORS preflight"""
         response = make_response('', 204)
@@ -56,35 +198,21 @@ class AnalyzeCoupon(Resource):
         return response
     
     @ocr_ns.doc('analyze_receipt',
-                description='Analisa cupom fiscal/recibo usando OCR e IA (Gemini Vision)',
-                security='Bearer',
-                responses={
-                    200: ('Análise concluída com sucesso', upload_response_model),
-                    400: ('Arquivo inválido', error_model),
-                    401: ('Não autenticado', error_model),
-                    500: ('Erro interno', error_model)
-                })
+                description='Analisa cupom e adiciona aos dados mockados',
+                security='Bearer')
     @jwt_required()
     def post(self):
         """
-        Analisar cupom fiscal ou recibo
+        Analisar cupom fiscal e adicionar ao dashboard
         
-        **Processo:**
-        1. Upload do arquivo (PNG, JPG, JPEG, PDF)
-        2. Extração de texto usando IA (Groq Llama)
-        3. Estruturação dos dados
-        4. Classificação automática da categoria
-        5. Retorno dos dados estruturados
-        
-        **Requer autenticação via Bearer token**
+        Aceita upload de arquivo e simula adição aos dados do dashboard.
         """
         try:
             # Verificar arquivo
             if 'file' not in request.files:
                 return {
                     'success': False,
-                    'message': 'Nenhum arquivo enviado',
-                    'error': 'no_file'
+                    'message': 'Nenhum arquivo enviado'
                 }, 400
             
             file = request.files['file']
@@ -92,17 +220,14 @@ class AnalyzeCoupon(Resource):
             if file.filename == '':
                 return {
                     'success': False,
-                    'message': 'Nenhum arquivo selecionado',
-                    'error': 'empty_filename'
+                    'message': 'Nenhum arquivo selecionado'
                 }, 400
             
-            # Obter usuário autenticado
             user = get_current_user()
             if not user:
                 return {
                     'success': False,
-                    'message': 'Usuário não autenticado',
-                    'error': 'unauthorized'
+                    'message': 'Usuário não autenticado'
                 }, 401
             
             # Salvar arquivo
@@ -111,64 +236,43 @@ class AnalyzeCoupon(Resource):
             except ValueError as e:
                 return {
                     'success': False,
-                    'message': str(e),
-                    'error': 'invalid_file_type'
+                    'message': str(e)
                 }, 400
             
-            # Analisar com IA
-            try:
-                print(f"📄 Analisando cupom: {unique_filename}")
-                llm_response = GeminiClient.analyze_receipt_image(file_path)
-                
-                # Parse da resposta
-                # parsed_data = ResponseParser.parse_llm_response(llm_response)
-                
-                # if not parsed_data.get("success"):
-                #     return {
-                #         'success': False,
-                #         'message': 'Erro ao processar resposta da IA',
-                #         'error': parsed_data.get('error')
-                #     }, 500
-                
-                # Classificar categoria se não veio da IA
-                # data = parsed_data["data"]
-                # if not data.get("categoria") or data["categoria"] == "Não Classificado":
-                #     data["categoria"] = GeminiClient.classify_expense_category(data.get("itens", []))
-                
-                # Adicionar nome do arquivo
-                # data["arquivo"] = unique_filename
-                
-                print(f"✅ Cupom analisado com sucesso: {llm_response}")
-                
-                return {
-                    'success': True,
-                    'message': 'Cupom analisado com sucesso',
-                    'data': llm_response
-                }, 200
-                
-            except ValueError as e:
-                # Deletar arquivo se houver erro
-                FileHandler.delete_file(file_path)
-                return {
-                    'success': False,
-                    'message': str(e),
-                    'error': 'groq_api_error'
-                }, 500
-                
-            except Exception as e:
-                # Deletar arquivo se houver erro
-                FileHandler.delete_file(file_path)
-                return {
-                    'success': False,
-                    'message': f'Erro ao processar arquivo: {str(e)}',
-                    'error': 'processing_error'
-                }, 500
+            # Simular processamento
+            import time
+            time.sleep(1.5)
+            
+            # Gerar novo gasto mockado
+            lojas = [
+                "Supermercado Central",
+                "Posto Shell", 
+                "Drogaria São Paulo",
+                "McDonald's",
+                "Carrefour"
+            ]
+            
+            novo_gasto = {
+                "id": generate_random_id(),
+                "gastos": round(random.uniform(25.00, 500.00), 2),
+                "status": "success",
+                "loja": random.choice(lojas),
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "arquivo": unique_filename
+            }
+            
+            print(f"✅ Novo gasto mockado: R$ {novo_gasto['gastos']:.2f} - {novo_gasto['loja']}")
+            
+            return {
+                'success': True,
+                'message': 'Cupom analisado com sucesso',
+                'data': novo_gasto
+            }, 200
             
         except Exception as e:
             return {
                 'success': False,
-                'message': f'Erro inesperado: {str(e)}',
-                'error': 'unexpected_error'
+                'message': f'Erro: {str(e)}'
             }, 500
 
 
@@ -183,16 +287,18 @@ class TestOCR(Resource):
         return response
     
     @ocr_ns.doc('test_ocr',
-                description='Testa conectividade com Groq API',
+                description='Testa configuração da API',
                 security='Bearer')
     @jwt_required()
     def get(self):
-        """Testar configuração da API Gemini/Google"""
-        gem_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        """Testar status da API"""
         
         return {
             'success': True,
-            'gemini_configured': bool(gem_key) or bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS")),
-            'model': GeminiClient.VISION_MODEL,
-            'cors_ok': True
+            'mode': 'MOCK',
+            'message': 'API rodando com dados mockados',
+            'endpoints': {
+                'dashboard': 'GET /api/ocr/dashboard',
+                'analyze': 'POST /api/ocr/analyze'
+            }
         }, 200
