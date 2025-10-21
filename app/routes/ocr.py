@@ -13,7 +13,38 @@ ocr_ns = Namespace('ocr', description='Operações de OCR e análise de cupons f
 
 # ==================== MODELS ====================
 
-# ... (mantenha os models anteriores)
+# Model de erro (ADICIONAR ISTO!)
+error_model = ocr_ns.model('Error', {
+    'success': fields.Boolean(description='Status da operação', default=False),
+    'message': fields.String(description='Mensagem de erro'),
+    'error': fields.String(description='Detalhes do erro')
+})
+
+# Model de item
+item_model = ocr_ns.model('Item', {
+    'nome': fields.String(description='Nome do produto'),
+    'quantidade': fields.Integer(description='Quantidade'),
+    'valor_unitario': fields.Float(description='Valor unitário'),
+    'valor_total': fields.Float(description='Valor total do item')
+})
+
+# Model de dados do cupom
+receipt_data_model = ocr_ns.model('ReceiptData', {
+    'loja': fields.String(description='Nome do estabelecimento'),
+    'data_compra': fields.String(description='Data da compra'),
+    'itens': fields.List(fields.Nested(item_model)),
+    'valor_total': fields.Float(description='Valor total da compra'),
+    'forma_pagamento': fields.String(description='Forma de pagamento'),
+    'categoria': fields.String(description='Categoria do gasto'),
+    'arquivo': fields.String(description='Nome do arquivo')
+})
+
+# Model de resposta de upload
+upload_response_model = ocr_ns.model('OCRResponse', {
+    'success': fields.Boolean(description='Status da operação'),
+    'message': fields.String(description='Mensagem de retorno'),
+    'data': fields.Nested(receipt_data_model)
+})
 
 # ==================== FUNÇÕES AUXILIARES ====================
 
@@ -129,7 +160,7 @@ class Dashboard(Resource):
                 security='Bearer',
                 responses={
                     200: 'Dados do dashboard retornados com sucesso',
-                    401: ('Não autenticado', error_model)
+                    401: ('Não autenticado', error_model)  # ✅ Agora está definido!
                 })
     @jwt_required()
     def get(self):
@@ -140,25 +171,6 @@ class Dashboard(Resource):
         - DataTableContainer: Resumo de gastos
         - DataTableBackup_DataTableDemo: Últimos gastos detalhados
         - ChartBarDefault: Gráfico de barras mensal por categoria
-        
-        **Formato de resposta:**
-```json
-        {
-          "tables": {
-            "DataTableContainer": {
-              "data": [...]
-            },
-            "DataTableBackup_DataTableDemo": {
-              "data": [...]
-            }
-          },
-          "charts": {
-            "ChartBarDefault": {
-              "data": [...]
-            }
-          }
-        }
-```
         """
         try:
             user = get_current_user()
@@ -199,16 +211,17 @@ class AnalyzeCoupon(Resource):
     
     @ocr_ns.doc('analyze_receipt',
                 description='Analisa cupom e adiciona aos dados mockados',
-                security='Bearer')
+                security='Bearer',
+                responses={
+                    200: ('Análise concluída', upload_response_model),
+                    400: ('Arquivo inválido', error_model),
+                    401: ('Não autenticado', error_model),
+                    500: ('Erro interno', error_model)
+                })
     @jwt_required()
     def post(self):
-        """
-        Analisar cupom fiscal e adicionar ao dashboard
-        
-        Aceita upload de arquivo e simula adição aos dados do dashboard.
-        """
+        """Analisar cupom fiscal e adicionar ao dashboard"""
         try:
-            # Verificar arquivo
             if 'file' not in request.files:
                 return {
                     'success': False,
@@ -230,7 +243,6 @@ class AnalyzeCoupon(Resource):
                     'message': 'Usuário não autenticado'
                 }, 401
             
-            # Salvar arquivo
             try:
                 file_path, unique_filename = FileHandler.save_uploaded_file(file, user['id'])
             except ValueError as e:
