@@ -17,25 +17,12 @@ class ResponseParser:
             dict: Dados estruturados do cupom
         """
         try:
-            # Extrair conteúdo da resposta
-            content = response["choices"][0]["message"]["content"]
-            
-            # Tentar extrair JSON (caso tenha texto extra)
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                content = json_match.group(0)
-            
+           # Extrair conteúdo da resposta
+            content = response.strip("`").replace("json\n", "").replace("\n```", "")
             # Parse do JSON
             parsed = json.loads(content)
-            
-            # Validar estrutura básica
-            validated = ResponseParser._validate_receipt_data(parsed)
-            
-            return {
-                "success": True,
-                "data": validated,
-                "raw_response": content
-            }
+
+            return {"success": True, "data": parsed, "raw_response": content}
             
         except json.JSONDecodeError as e:
             return {
