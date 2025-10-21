@@ -1,6 +1,7 @@
 import requests
 import os
 from typing import Optional
+import base64
 
 class GroqClient:
     """Cliente para integração com Groq API (Llama)"""
@@ -61,6 +62,10 @@ IMPORTANTE:
 """
         
         # Payload com imagem incluída
+        with open(image_path, "rb") as f:
+            image_base64 = base64.b64encode(f.read()).decode("utf-8")
+
+        # 🔹 Agora sim o payload atualizado
         payload = {
             "model": GroqClient.MODEL_NAME,
             "messages": [
@@ -72,13 +77,25 @@ IMPORTANTE:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "image", "image_url": f"file://{image_path}"}
+                        {"type": "image_url", "image_url": f"data:image/jpeg;base64,{image_base64}"}
                     ]
                 }
             ],
             "temperature": 0.1,
             "max_tokens": 2000
         }
+
+        try:
+            response = requests.post(
+                GroqClient.API_URL,
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            print(f"Erro na requisição para Groq API: {e}")
+            raise
         
         try:
             response = requests.post(
@@ -118,14 +135,10 @@ IMPORTANTE:
 Classifique a seguinte lista de itens em UMA das categorias abaixo:
 
 Categorias disponíveis:
-- Alimentação
-- Transporte
-- Saúde
-- Educação
-- Lazer
-- Vestuário
-- Moradia
-- Outros
+- Food
+- Transport
+- Utility
+- Entertainment
 
 Itens: {items_text}
 
