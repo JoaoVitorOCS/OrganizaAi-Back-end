@@ -169,14 +169,17 @@ INSTRUÇÕES IMPORTANTES:
             # Nota: este fallback pode não suportar recursos multimodais avançados dependendo
             # do modelo/endpoint. Ajuste conforme necessidade.
             rest_model = GeminiClient.VISION_MODEL
-            endpoint = f"{GeminiClient.REST_BASE}/models/{rest_model}:generate?key={GeminiClient.API_KEY}"
+            endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{rest_model}:generateContent?key={GeminiClient.API_KEY}"
 
             payload = {
-                "prompt": {
-                    "text": prompt + f"\n\nImagem (data URI): data:{mime_type};base64,{image_base64}"
-                },
-                "temperature": 0.1,
-                "maxOutputTokens": 2000
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt},
+                            {"inline_data": {"mime_type": mime_type, "data": image_base64}}
+                        ]
+                    }
+                ]
             }
 
             try:
