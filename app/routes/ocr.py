@@ -121,29 +121,29 @@ class AnalyzeCoupon(Resource):
                 llm_response = GeminiClient.analyze_receipt_image(file_path)
                 
                 # Parse da resposta
-                parsed_data = ResponseParser.parse_llm_response(llm_response)
+                # parsed_data = ResponseParser.parse_llm_response(llm_response)
                 
-                if not parsed_data.get("success"):
-                    return {
-                        'success': False,
-                        'message': 'Erro ao processar resposta da IA',
-                        'error': parsed_data.get('error')
-                    }, 500
+                # if not parsed_data.get("success"):
+                #     return {
+                #         'success': False,
+                #         'message': 'Erro ao processar resposta da IA',
+                #         'error': parsed_data.get('error')
+                #     }, 500
                 
                 # Classificar categoria se não veio da IA
-                data = parsed_data["data"]
-                if not data.get("categoria") or data["categoria"] == "Não Classificado":
-                    data["categoria"] = GeminiClient.classify_expense_category(data.get("itens", []))
+                # data = parsed_data["data"]
+                # if not data.get("categoria") or data["categoria"] == "Não Classificado":
+                #     data["categoria"] = GeminiClient.classify_expense_category(data.get("itens", []))
                 
                 # Adicionar nome do arquivo
-                data["arquivo"] = unique_filename
+                # data["arquivo"] = unique_filename
                 
-                print(f"✅ Cupom analisado com sucesso: {data.get('loja')}")
+                print(f"✅ Cupom analisado com sucesso: {llm_response}")
                 
                 return {
                     'success': True,
                     'message': 'Cupom analisado com sucesso',
-                    'data': data
+                    'data': llm_response
                 }, 200
                 
             except ValueError as e:
