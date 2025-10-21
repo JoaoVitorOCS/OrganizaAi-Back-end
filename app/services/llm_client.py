@@ -1,6 +1,5 @@
 import requests
 import os
-import base64
 from typing import Optional
 
 class GroqClient:
@@ -28,15 +27,12 @@ class GroqClient:
         if not GroqClient.API_KEY:
             raise ValueError("GROQ_API_KEY não configurada no .env")
         
-        # Converter imagem em Base64
-        with open(image_path, "rb") as image_file:
-            image_base64 = base64.b64encode(image_file.read()).decode("utf-8")
-        
         headers = {
             "Authorization": f"Bearer {GroqClient.API_KEY}",
             "Content-Type": "application/json"
         }
         
+        # Prompt estruturado
         prompt = """
 Analise o cupom fiscal da imagem fornecida e retorne APENAS um JSON válido no seguinte formato:
 
@@ -64,6 +60,7 @@ IMPORTANTE:
 - Se não conseguir identificar algum campo, use null
 """
         
+        # Payload com imagem incluída
         payload = {
             "model": GroqClient.MODEL_NAME,
             "messages": [
@@ -75,7 +72,7 @@ IMPORTANTE:
                     "role": "user",
                     "content": [
                         {"type": "text", "text": prompt},
-                        {"type": "image", "image_base64": image_base64}
+                        {"type": "image", "image_url": f"file://{image_path}"}
                     ]
                 }
             ],
