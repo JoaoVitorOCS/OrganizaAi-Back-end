@@ -1,19 +1,19 @@
-import requests
 import os
-import base64
-import json
 
 try:
-        import google.generativeai as genai  # type: ignore
+        from google import genai  # type: ignore
+        from google.genai.types import Content, Part  # type: ignore
 except Exception:
         genai = None
+        Content = None
+        Part = None
 
 
 class GeminiClient:
         """Cliente para integração com a API Gemini do Google.
 
         Observações:
-        - Este cliente utiliza a biblioteca oficial `google-generative-ai`.
+        - Este cliente utiliza a biblioteca oficial `google-genai`.
         - É necessário configurar a API Key do Google na variável de ambiente `GOOGLE_API_KEY`.
         - A interface pública foi mantida para compatibilidade com o restante do projeto:
             `analyze_receipt_image(image_path)` e `classify_expense_category(items)`.
@@ -23,6 +23,28 @@ class GeminiClient:
         API_KEY = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-1.5-pro-latest")
         TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-1.5-flash-latest")
+
+        @classmethod
+        def _ensure_library(cls) -> None:
+            if not genai or Content is None or Part is None:
+                raise ImportError(
+                    "A biblioteca 'google-genai' não está instalada. "
+                    "Instale-a com: pip install google-genai"
+                )
+
+        @classmethod
+        def _create_client(cls) -> "genai.Client":
+            cls._ensure_library()
+
+            if not cls.API_KEY:
+                raise ValueError("Chave da API do Google não configurada. Defina a variável de ambiente GOOGLE_API_KEY.")
+
+            try:
+                return genai.Client(api_key=cls.API_KEY)
+            except Exception as exc:
+                raise ValueError(
+                    "Não foi possível inicializar o cliente Gemini. Verifique a chave de API e a instalação do pacote."
+                ) from exc
 
         @staticmethod
         def analyze_receipt_image(image_path: str) -> dict:
@@ -36,20 +58,11 @@ class GeminiClient:
                 Um dicionário contendo os dados extraídos no formato esperado pelo parser.
 
             Raises:
-                ImportError: Se a biblioteca 'google-generativeai' não estiver instalada.
+                ImportError: Se a biblioteca 'google-genai' não estiver instalada.
                 ValueError: Se a API key não estiver configurada ou se ocorrer um erro na leitura
                             do arquivo ou na comunicação com a API.
             """
-            if not genai:
-                raise ImportError(
-                    "A biblioteca 'google-generativeai' não está instalada. "
-                    "Instale-a com: pip install google-generative-ai"
-                )
-
-            if not GeminiClient.API_KEY:
-                raise ValueError("Chave da API do Google não configurada. Defina a variável de ambiente GOOGLE_API_KEY.")
-
-            genai.configure(api_key=GeminiClient.API_KEY)
+            client = GeminiClient._create_client()
 
             print(f"📷 Analisando cupom: {os.path.basename(image_path)}")
             print(f"🤖 Modelo (vision): {GeminiClient.VISION_MODEL}")
@@ -70,8 +83,6 @@ class GeminiClient:
                 'webp': 'image/webp', 'gif': 'image/gif'
             }
             mime_type = mime_types.get(ext, 'image/jpeg')
-
-            image_part = {"mime_type": mime_type, "data": image_bytes}
 
             prompt = """
 Analise cuidadosamente o cupom fiscal brasileiro na imagem e extraia as seguintes informações.
@@ -107,13 +118,24 @@ INSTRUÇÕES IMPORTANTES:
 """
             try:
                 print("📤 Enviando para a API Gemini...")
-                model = genai.GenerativeModel(GeminiClient.VISION_MODEL)
-                response = model.generate_content([prompt, image_part])
+                contents = [
+                    Content(
+                        role="user",
+                        parts=[
+                            Part.from_text(prompt.strip()),
+                            Part.from_bytes(data=image_bytes, mime_type=mime_type),
+                        ],
+                    )
+                ]
+                response = client.models.generate_content(
+                    model=GeminiClient.VISION_MODEL,
+                    contents=contents,
+                )
 
                 # A resposta da biblioteca é encapsulada para manter a
                 # compatibilidade com o resto do sistema que espera um formato específico.
                 result = {
-                    "choices": [{"message": {"content": response.text}}],
+                    "choices": [{"message": {"content": response.text or ""}}],
                     "raw": str(response)  # Armazena a representação da resposta para debug
                 }
 
@@ -136,14 +158,14 @@ INSTRUÇÕES IMPORTANTES:
                 A categoria classificada como uma string ('Food', 'Transport', etc.).
                 Retorna 'Utility' como padrão em caso de erro ou falta de dados.
             """
-            if not genai:
-                print("⚠️ Biblioteca 'google-generativeai' não encontrada. A categoria não será classificada.")
+            if not genai or Content is None or Part is None:
+                print("⚠️ Biblioteca 'google-genai' não encontrada. A categoria não será classificada.")
                 return "Utility"
 
             if not GeminiClient.API_KEY or not items:
                 return "Utility"
 
-            genai.configure(api_key=GeminiClient.API_KEY)
+            client = GeminiClient._create_client()
 
             # Concatena os nomes dos 10 primeiros itens para criar o prompt
             items_text = ", ".join([
@@ -170,12 +192,20 @@ Responda APENAS com o nome da categoria em inglês (Food, Transport, Utility ou 
 Não adicione explicações.
 """
             try:
-                model = genai.GenerativeModel(GeminiClient.TEXT_MODEL)
-                response = model.generate_content(
-                    prompt,
+                contents = [
+                    Content(
+                        role="user",
+                        parts=[
+                            Part.from_text(prompt.strip())
+                        ],
+                    )
+                ]
+                response = client.models.generate_content(
+                    model=GeminiClient.TEXT_MODEL,
+                    contents=contents,
                     generation_config={"temperature": 0.1, "max_output_tokens": 60}
                 )
-                category = response.text.strip()
+                category = (response.text or "").strip()
 
             except Exception as e:
                 print(f"⚠️ Erro ao classificar categoria com a API Gemini: {e}")
