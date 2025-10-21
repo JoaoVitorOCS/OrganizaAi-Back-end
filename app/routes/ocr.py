@@ -3,7 +3,7 @@ from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required
 from app.middleware.auth_middleware import get_current_user
 from app.services.file_handler import FileHandler
-from app.services.llm_client import GroqClient
+from app.services.llm_client import GeminiClient
 from app.services.parser import ResponseParser
 import os
 
@@ -56,7 +56,7 @@ class AnalyzeCoupon(Resource):
         return response
     
     @ocr_ns.doc('analyze_receipt',
-                description='Analisa cupom fiscal/recibo usando OCR e IA (Groq Llama)',
+                description='Analisa cupom fiscal/recibo usando OCR e IA (Gemini Vision)',
                 security='Bearer',
                 responses={
                     200: ('Análise concluída com sucesso', upload_response_model),
@@ -118,7 +118,7 @@ class AnalyzeCoupon(Resource):
             # Analisar com IA
             try:
                 print(f"📄 Analisando cupom: {unique_filename}")
-                llm_response = GroqClient.analyze_receipt_image(file_path)
+                llm_response = GeminiClient.analyze_receipt_image(file_path)
                 
                 # Parse da resposta
                 parsed_data = ResponseParser.parse_llm_response(llm_response)
@@ -133,7 +133,7 @@ class AnalyzeCoupon(Resource):
                 # Classificar categoria se não veio da IA
                 data = parsed_data["data"]
                 if not data.get("categoria") or data["categoria"] == "Não Classificado":
-                    data["categoria"] = GroqClient.classify_expense_category(data.get("itens", []))
+                    data["categoria"] = GeminiClient.classify_expense_category(data.get("itens", []))
                 
                 # Adicionar nome do arquivo
                 data["arquivo"] = unique_filename
@@ -187,12 +187,12 @@ class TestOCR(Resource):
                 security='Bearer')
     @jwt_required()
     def get(self):
-        """Testar configuração da API Groq"""
-        groq_key = os.getenv("GROQ_API_KEY")
+        """Testar configuração da API Gemini/Google"""
+        gem_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         
         return {
             'success': True,
-            'groq_configured': bool(groq_key),
-            'model': GroqClient.MODEL_NAME,
+            'gemini_configured': bool(gem_key) or bool(os.getenv("GOOGLE_APPLICATION_CREDENTIALS")),
+            'model': GeminiClient.VISION_MODEL,
             'cors_ok': True
         }, 200
