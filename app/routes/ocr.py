@@ -1,4 +1,4 @@
-from flask import request
+from flask import request, make_response
 from flask_restx import Namespace, Resource, fields
 from flask_jwt_extended import jwt_required
 from app.middleware.auth_middleware import get_current_user
@@ -45,6 +45,16 @@ error_model = ocr_ns.model('Error', {
 
 @ocr_ns.route('/analyze')
 class AnalyzeCoupon(Resource):
+    
+    # OPTIONS para preflight CORS
+    def options(self):
+        """Handle CORS preflight"""
+        response = make_response('', 204)
+        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Max-Age'] = '3600'
+        return response
+    
     @ocr_ns.doc('analyze_receipt',
                 description='Analisa cupom fiscal/recibo usando OCR e IA (Groq Llama)',
                 security='Bearer',
@@ -54,13 +64,6 @@ class AnalyzeCoupon(Resource):
                     401: ('Não autenticado', error_model),
                     500: ('Erro interno', error_model)
                 })
-    @ocr_ns.expect(ocr_ns.parser().add_argument(
-        'file',
-        location='files',
-        type='file',
-        required=True,
-        help='Arquivo de imagem do cupom (PNG, JPG, JPEG, PDF)'
-    ))
     @jwt_required()
     def post(self):
         """
@@ -78,23 +81,39 @@ class AnalyzeCoupon(Resource):
         try:
             # Verificar arquivo
             if 'file' not in request.files:
-                ocr_ns.abort(400, 'Nenhum arquivo enviado')
+                return {
+                    'success': False,
+                    'message': 'Nenhum arquivo enviado',
+                    'error': 'no_file'
+                }, 400
             
             file = request.files['file']
             
             if file.filename == '':
-                ocr_ns.abort(400, 'Nenhum arquivo selecionado')
+                return {
+                    'success': False,
+                    'message': 'Nenhum arquivo selecionado',
+                    'error': 'empty_filename'
+                }, 400
             
             # Obter usuário autenticado
             user = get_current_user()
             if not user:
-                ocr_ns.abort(401, 'Usuário não autenticado')
+                return {
+                    'success': False,
+                    'message': 'Usuário não autenticado',
+                    'error': 'unauthorized'
+                }, 401
             
             # Salvar arquivo
             try:
                 file_path, unique_filename = FileHandler.save_uploaded_file(file, user['id'])
             except ValueError as e:
-                ocr_ns.abort(400, str(e))
+                return {
+                    'success': False,
+                    'message': str(e),
+                    'error': 'invalid_file_type'
+                }, 400
             
             # Analisar com IA
             try:
@@ -105,7 +124,11 @@ class AnalyzeCoupon(Resource):
                 parsed_data = ResponseParser.parse_llm_response(llm_response)
                 
                 if not parsed_data.get("success"):
-                    ocr_ns.abort(500, f"Erro ao processar resposta da IA: {parsed_data.get('error')}")
+                    return {
+                        'success': False,
+                        'message': 'Erro ao processar resposta da IA',
+                        'error': parsed_data.get('error')
+                    }, 500
                 
                 # Classificar categoria se não veio da IA
                 data = parsed_data["data"]
@@ -126,19 +149,39 @@ class AnalyzeCoupon(Resource):
             except ValueError as e:
                 # Deletar arquivo se houver erro
                 FileHandler.delete_file(file_path)
-                ocr_ns.abort(500, str(e))
+                return {
+                    'success': False,
+                    'message': str(e),
+                    'error': 'groq_api_error'
+                }, 500
                 
             except Exception as e:
                 # Deletar arquivo se houver erro
                 FileHandler.delete_file(file_path)
-                ocr_ns.abort(500, f'Erro ao processar arquivo: {str(e)}')
+                return {
+                    'success': False,
+                    'message': f'Erro ao processar arquivo: {str(e)}',
+                    'error': 'processing_error'
+                }, 500
             
         except Exception as e:
-            ocr_ns.abort(500, f'Erro inesperado: {str(e)}')
+            return {
+                'success': False,
+                'message': f'Erro inesperado: {str(e)}',
+                'error': 'unexpected_error'
+            }, 500
 
 
 @ocr_ns.route('/test')
 class TestOCR(Resource):
+    
+    def options(self):
+        """Handle CORS preflight"""
+        response = make_response('', 204)
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        return response
+    
     @ocr_ns.doc('test_ocr',
                 description='Testa conectividade com Groq API',
                 security='Bearer')
@@ -150,5 +193,6 @@ class TestOCR(Resource):
         return {
             'success': True,
             'groq_configured': bool(groq_key),
-            'model': GroqClient.MODEL_NAME
+            'model': GroqClient.MODEL_NAME,
+            'cors_ok': True
         }, 200
