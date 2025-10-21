@@ -122,7 +122,7 @@ INSTRUÇÕES IMPORTANTES:
                     Content(
                         role="user",
                         parts=[
-                            Part.from_text(prompt.strip()),
+                            Part.from_text(text=prompt.strip()),
                             Part.from_bytes(data=image_bytes, mime_type=mime_type),
                         ],
                     )
@@ -196,7 +196,7 @@ Não adicione explicações.
                     Content(
                         role="user",
                         parts=[
-                            Part.from_text(prompt.strip())
+                            Part.from_text(text=prompt.strip())
                         ],
                     )
                 ]
